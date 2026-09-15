@@ -1,3 +1,27 @@
-DROP TABLE IF EXISTS Customers;
-CREATE TABLE IF NOT EXISTS Customers (CustomerId INTEGER PRIMARY KEY, CompanyName TEXT, ContactName TEXT);
-INSERT INTO Customers (CustomerID, CompanyName, ContactName) VALUES (1, 'Alfreds Futterkiste', 'Maria Anders'), (4, 'Around the Horn', 'Thomas Hardy'), (11, 'Bs Beverages', 'Victoria Ashworth'), (13, 'Bs Beverages', 'Random Name');
+CREATE TABLE IF NOT EXISTS people (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  affiliation TEXT,
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS storms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  season_year INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  storm_id INTEGER NOT NULL REFERENCES storms(id),
+  flight_designation TEXT,
+  mission_date TEXT
+);
+
+CREATE TABLE IF NOT EXISTS penetrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mission_id INTEGER NOT NULL REFERENCES missions(id),
+  person_id INTEGER NOT NULL REFERENCES people(id),
+  penetration_count INTEGER NOT NULL DEFAULT 0
+);
