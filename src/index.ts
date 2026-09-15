@@ -1,19 +1,177 @@
+// penetration-tracker-api
+//
+// Public reads:
+//   GET  /people/:id
+//   GET  /people/:id/penetrations?year=2025|2026|current|all
+//   GET  /leaderboard?year=current|all&limit=10
+//   GET  /storms
+//   GET  /missions?storm_id=1
+//
+// Admin writes (see note at bottom of file about gating these):
+//   POST /admin/people           { first_name, last_name, affiliation }
+//   POST /admin/storms           { name, season_year }
+//   POST /admin/missions         { storm_id, flight_designation, mission_date }
+//   POST /admin/missions/:id/penetrations   { person_id, penetration_count }
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+function resolveYear(yearParam: string | null): number | null {
+  if (!yearParam || yearParam === "all") return null;
+  if (yearParam === "current") return new Date().getFullYear();
+  const y = parseInt(yearParam, 10);
+  return Number.isNaN(y) ? null : y;
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname, searchParams } = url;
+    const parts = pathname.split("/").filter(Boolean);
 
-    if (pathname === "/api/beverages") {
-      // If you did not use `DB` as your binding name, change it here
-      const { results } = await env.DB.prepare(
-        "SELECT * FROM Customers WHERE CompanyName = ?"
-      )
-        .bind("Bs Beverages")
-        .all();
-      return Response.json(results);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: CORS_HEADERS });
     }
 
-    return new Response(
-      "Call /api/beverages to see everyone who works at Bs Beverages"
-    );
+    try {
+      // GET /people/:id
+      if (request.method === "GET" && parts[0] === "people" && parts.length === 2) {
+        const person = await env.DB.prepare(
+          "SELECT id, first_name, last_name, affiliation, active FROM people WHERE id = ?"
+        ).bind(parts[1]).first();
+        if (!person) return json({ error: "person not found" }, 404);
+        return json(person);
+      }
+
+      // GET /people/:id/penetrations?year=
+      if (request.method === "GET" && parts[0] === "people" && parts[2] === "penetrations") {
+        const year = resolveYear(searchParams.get("year"));
+        let query = `
+          SELECT COALESCE(SUM(p.penetration_count), 0) AS total_penetrations
+          FROM penetrations p
+          JOIN missions m ON m.id = p.mission_id
+          JOIN storms s ON s.id = m.storm_id
+          WHERE p.person_id = ?`;
+        const binds: (string | number)[] = [parts[1]];
+        if (year !== null) {
+          query += " AND s.season_year = ?";
+          binds.push(year);
+        }
+        const result = await env.DB.prepare(query).bind(...binds).first();
+        return json({ person_id: Number(parts[1]), year: year ?? "all", ...result });
+      }
+
+      // GET /leaderboard?year=&limit=
+      if (request.method === "GET" && parts[0] === "leaderboard" && parts.length === 1) {
+        const year = resolveYear(searchParams.get("year") ?? "current");
+        const limit = Math.min(parseInt(searchParams.get("limit") ?? "10", 10) || 10, 100);
+        let query = `
+          SELECT pe.id AS person_id, pe.first_name, pe.last_name, pe.affiliation,
+                 SUM(p.penetration_count) AS total_penetrations
+          FROM penetrations p
+          JOIN people pe ON pe.id = p.person_id
+          JOIN missions m ON m.id = p.mission_id
+          JOIN storms s ON s.id = m.storm_id`;
+        const binds: (string | number)[] = [];
+        if (year !== null) {
+          query += " WHERE s.season_year = ?";
+          binds.push(year);
+        }
+        query += " GROUP BY pe.id ORDER BY total_penetrations DESC LIMIT ?";
+        binds.push(limit);
+        const { results } = await env.DB.prepare(query).bind(...binds).all();
+        return json({ year: year ?? "all", leaderboard: results });
+      }
+
+      // GET /storms
+      if (request.method === "GET" && parts[0] === "storms" && parts.length === 1) {
+        const { results } = await env.DB.prepare(
+          "SELECT id, name, season_year FROM storms ORDER BY season_year DESC, name"
+        ).all();
+        return json({ storms: results });
+      }
+
+      // GET /missions?storm_id=
+      if (request.method === "GET" && parts[0] === "missions" && parts.length === 1) {
+        const stormId = searchParams.get("storm_id");
+        let query = "SELECT id, storm_id, flight_designation, mission_date FROM missions";
+        const binds: (string | number)[] = [];
+        if (stormId) {
+          query += " WHERE storm_id = ?";
+          binds.push(stormId);
+        }
+        query += " ORDER BY mission_date DESC";
+        const { results } = await env.DB.prepare(query).bind(...binds).all();
+        return json({ missions: results });
+      }
+
+      // POST /admin/people
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "people") {
+        const body: any = await request.json();
+        if (!body.first_name || !body.last_name) {
+          return json({ error: "first_name and last_name are required" }, 400);
+        }
+        const result = await env.DB.prepare(
+          "INSERT INTO people (first_name, last_name, affiliation) VALUES (?, ?, ?)"
+        ).bind(body.first_name, body.last_name, body.affiliation ?? null).run();
+        return json({ id: result.meta.last_row_id }, 201);
+      }
+
+      // POST /admin/storms
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "storms") {
+        const body: any = await request.json();
+        if (!body.name || !body.season_year) {
+          return json({ error: "name and season_year are required" }, 400);
+        }
+        const result = await env.DB.prepare(
+          "INSERT INTO storms (name, season_year) VALUES (?, ?)"
+        ).bind(body.name, body.season_year).run();
+        return json({ id: result.meta.last_row_id }, 201);
+      }
+
+      // POST /admin/missions
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "missions" && parts.length === 2) {
+        const body: any = await request.json();
+        if (!body.storm_id) {
+          return json({ error: "storm_id is required" }, 400);
+        }
+        const result = await env.DB.prepare(
+          "INSERT INTO missions (storm_id, flight_designation, mission_date) VALUES (?, ?, ?)"
+        ).bind(body.storm_id, body.flight_designation ?? null, body.mission_date ?? null).run();
+        return json({ id: result.meta.last_row_id }, 201);
+      }
+
+      // POST /admin/missions/:id/penetrations
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "missions" && parts[3] === "penetrations") {
+        const body: any = await request.json();
+        if (!body.person_id || body.penetration_count === undefined) {
+          return json({ error: "person_id and penetration_count are required" }, 400);
+        }
+        const result = await env.DB.prepare(
+          "INSERT INTO penetrations (mission_id, person_id, penetration_count) VALUES (?, ?, ?)"
+        ).bind(parts[2], body.person_id, body.penetration_count).run();
+        return json({ id: result.meta.last_row_id }, 201);
+      }
+
+      return json({ error: "not found" }, 404);
+    } catch (err: any) {
+      return json({ error: err.message }, 500);
+    }
   },
 } satisfies ExportedHandler<Env>;
+
+// NOTE ON ADMIN ROUTES:
+// This Worker does not check auth on /admin/* itself. Gate it with Cloudflare
+// Access (free for small teams) at the zone level, restricting the /admin/*
+// path to your AOC team's Google/email logins, rather than building auth into
+// the code here.
