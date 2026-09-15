@@ -49,7 +49,7 @@ export default {
       // GET /people (full roster, for client-side autocomplete)
       if (request.method === "GET" && parts[0] === "people" && parts.length === 1) {
         const { results } = await env.DB.prepare(
-          "SELECT id, first_name, last_name, affiliation FROM people WHERE active = 1 ORDER BY last_name, first_name"
+          "SELECT id, first_name, last_name, affiliation FROM people ORDER BY last_name, first_name"
         ).all();
         return json({ people: results });
       }
