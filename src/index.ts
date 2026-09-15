@@ -3,6 +3,7 @@
 // Public reads:
 //   GET  /people
 //   GET  /people/:id
+//   GET  /people/:id/breakdown
 //   GET  /people/:id/penetrations?year=2025|2026|current|all
 //   GET  /leaderboard?year=current|all&limit=10
 //   GET  /storms
@@ -60,6 +61,21 @@ export default {
         ).bind(parts[1]).first();
         if (!person) return json({ error: "person not found" }, 404);
         return json(person);
+      }
+
+      // GET /people/:id/breakdown  (per-storm totals grouped by season, for one person)
+      if (request.method === "GET" && parts[0] === "people" && parts[2] === "breakdown") {
+        const query = `
+          SELECT s.season_year, s.id AS storm_id, s.name AS storm_name,
+                 SUM(p.penetration_count) AS penetration_count
+          FROM penetrations p
+          JOIN missions m ON m.id = p.mission_id
+          JOIN storms s ON s.id = m.storm_id
+          WHERE p.person_id = ?
+          GROUP BY s.season_year, s.id
+          ORDER BY s.season_year DESC, penetration_count DESC`;
+        const { results } = await env.DB.prepare(query).bind(parts[1]).all();
+        return json({ person_id: Number(parts[1]), breakdown: results });
       }
 
       // GET /people/:id/penetrations?year=
