@@ -1,6 +1,7 @@
 // penetration-tracker-api
 //
 // Public reads:
+//   GET  /people
 //   GET  /people/:id
 //   GET  /people/:id/penetrations?year=2025|2026|current|all
 //   GET  /leaderboard?year=current|all&limit=10
@@ -44,6 +45,14 @@ export default {
     }
 
     try {
+      // GET /people (full roster, for client-side autocomplete)
+      if (request.method === "GET" && parts[0] === "people" && parts.length === 1) {
+        const { results } = await env.DB.prepare(
+          "SELECT id, first_name, last_name, affiliation FROM people WHERE active = 1 ORDER BY last_name, first_name"
+        ).all();
+        return json({ people: results });
+      }
+
       // GET /people/:id
       if (request.method === "GET" && parts[0] === "people" && parts.length === 2) {
         const person = await env.DB.prepare(
