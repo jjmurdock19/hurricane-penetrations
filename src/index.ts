@@ -9,7 +9,7 @@
 //   GET  /storms
 //   GET  /missions?storm_id=1
 //
-// Admin writes (see note at bottom of file about gating these):
+// Admin writes (require header  X-Admin-Token: <ADMIN_TOKEN secret>):
 //   POST /admin/people           { first_name, last_name, affiliation }
 //   POST /admin/storms           { name, season_year }
 //   POST /admin/missions         { storm_id, flight_designation, mission_date }
@@ -18,7 +18,7 @@
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Token",
 };
 
 function json(data: unknown, status = 200): Response {
@@ -43,6 +43,15 @@ export default {
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
+    }
+
+    // Every /admin/* write requires the shared admin token.
+    if (parts[0] === "admin") {
+      const provided = request.headers.get("X-Admin-Token");
+      const expected = (env as any).ADMIN_TOKEN as string | undefined;
+      if (!expected || provided !== expected) {
+        return json({ error: "unauthorized" }, 401);
+      }
     }
 
     try {
@@ -196,7 +205,10 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 // NOTE ON ADMIN ROUTES:
-// This Worker does not check auth on /admin/* itself. Gate it with Cloudflare
-// Access (free for small teams) at the zone level, restricting the /admin/*
-// path to your AOC team's Google/email logins, rather than building auth into
-// the code here.
+// /admin/* writes require a shared secret sent as the X-Admin-Token header,
+// checked against the ADMIN_TOKEN Worker secret above. Set it with:
+//   wrangler secret put ADMIN_TOKEN
+// The admin console (Apps Script, in the hurricane_pennie_tracker_pages repo's
+// admin/ folder) asks for a password, and on success hands the browser this
+// same token to attach to its write requests -- the password itself never
+// leaves the Apps Script server.
