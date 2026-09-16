@@ -51,9 +51,12 @@ export default {
       const provided = request.headers.get("X-Admin-Token");
       const expected = (env as any).ADMIN_TOKEN as string | undefined;
       if (!expected || provided !== expected) {
-        return json({ error: "unauthorized" }, 401);
+        return json({
+          error: `unauthorized (token configured: ${!!expected}, expected length: ${expected ? expected.length : 0}, received length: ${provided ? provided.length : 0})`
+        }, 401);
       }
     }
+
 
     try {
       // GET /people (full roster, for client-side autocomplete)
