@@ -5,7 +5,7 @@
 //   GET  /people/:id
 //   GET  /people/:id/breakdown
 //   GET  /people/:id/penetrations?year=2025|2026|current|all
-//   GET  /leaderboard?year=current|all&limit=10
+//   GET  /leaderboard?year=current|all|fiscal|<YYYY>&limit=10
 //   GET  /storms
 //   GET  /missions?storm_id=1
 //
@@ -36,6 +36,15 @@ function resolveYear(yearParam: string | null): number | null {
   return Number.isNaN(y) ? null : y;
 }
 
+// Federal fiscal year: Oct 1 - Sep 30, named for the calendar year Sep 30 falls in.
+function currentFiscalYearRange(): { fy: number; start: string; end: string } {
+  const now = new Date();
+  const month = now.getUTCMonth() + 1; // 1-12
+  const year = now.getUTCFullYear();
+  const fy = month >= 10 ? year + 1 : year;
+  return { fy, start: `${fy - 1}-10-01`, end: `${fy}-09-30` };
+}
+
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
@@ -51,12 +60,9 @@ export default {
       const provided = request.headers.get("X-Admin-Token");
       const expected = (env as any).ADMIN_TOKEN as string | undefined;
       if (!expected || provided !== expected) {
-        return json({
-          error: `unauthorized (token configured: ${!!expected}, expected length: ${expected ? expected.length : 0}, received length: ${provided ? provided.length : 0})`
-        }, 401);
+        return json({ error: "unauthorized" }, 401);
       }
     }
-
 
     try {
       // GET /people (full roster, for client-side autocomplete)
@@ -111,8 +117,9 @@ export default {
 
       // GET /leaderboard?year=&limit=
       if (request.method === "GET" && parts[0] === "leaderboard" && parts.length === 1) {
-        const year = resolveYear(searchParams.get("year") ?? "current");
+        const yearParam = searchParams.get("year") ?? "current";
         const limit = Math.min(parseInt(searchParams.get("limit") ?? "10", 10) || 10, 100);
+
         let query = `
           SELECT pe.id AS person_id, pe.first_name, pe.last_name, pe.affiliation,
                  SUM(p.penetration_count) AS total_penetrations
@@ -121,14 +128,26 @@ export default {
           JOIN missions m ON m.id = p.mission_id
           JOIN storms s ON s.id = m.storm_id`;
         const binds: (string | number)[] = [];
-        if (year !== null) {
-          query += " WHERE s.season_year = ?";
-          binds.push(year);
+        let label: string | number;
+
+        if (yearParam === "fiscal") {
+          const { fy, start, end } = currentFiscalYearRange();
+          query += " WHERE m.mission_date >= ? AND m.mission_date <= ?";
+          binds.push(start, end);
+          label = "FY" + fy;
+        } else {
+          const year = resolveYear(yearParam);
+          if (year !== null) {
+            query += " WHERE s.season_year = ?";
+            binds.push(year);
+          }
+          label = year ?? "all";
         }
+
         query += " GROUP BY pe.id ORDER BY total_penetrations DESC LIMIT ?";
         binds.push(limit);
         const { results } = await env.DB.prepare(query).bind(...binds).all();
-        return json({ year: year ?? "all", leaderboard: results });
+        return json({ year: label, leaderboard: results });
       }
 
       // GET /storms
@@ -227,9 +246,8 @@ export default {
 
 // NOTE ON ADMIN ROUTES:
 // /admin/* writes require a shared secret sent as the X-Admin-Token header,
-// checked against the ADMIN_TOKEN Worker secret above. Set it with:
-//   wrangler secret put ADMIN_TOKEN
-// The admin console (Apps Script, in the hurricane_pennie_tracker_pages repo's
-// admin/ folder) asks for a password, and on success hands the browser this
-// same token to attach to its write requests -- the password itself never
-// leaves the Apps Script server.
+// checked against the ADMIN_TOKEN Worker secret (Settings > Variables and
+// Secrets > Runtime, not Build). The admin console (Apps Script, in the
+// hurricane_pennie_tracker_pages repo's admin/ folder) asks for a password,
+// and on success hands the browser this same token to attach to its write
+// requests -- the password itself never leaves the Apps Script server.
