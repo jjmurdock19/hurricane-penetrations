@@ -11,6 +11,7 @@
 //
 // Admin writes (require header  X-Admin-Token: <ADMIN_TOKEN secret>):
 //   POST /admin/people           { first_name, last_name, affiliation }
+//   POST /admin/people/:id       { first_name?, last_name?, affiliation?, active? }  (update)
 //   POST /admin/storms           { name, season_year }
 //   POST /admin/missions         { storm_id, flight_designation, mission_date }
 //   POST /admin/missions/:id/penetrations   { person_id, penetration_count }
@@ -150,7 +151,7 @@ export default {
       }
 
       // POST /admin/people
-      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "people") {
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "people" && parts.length === 2) {
         const body: any = await request.json();
         if (!body.first_name || !body.last_name) {
           return json({ error: "first_name and last_name are required" }, 400);
@@ -159,6 +160,23 @@ export default {
           "INSERT INTO people (first_name, last_name, affiliation) VALUES (?, ?, ?)"
         ).bind(body.first_name, body.last_name, body.affiliation ?? null).run();
         return json({ id: result.meta.last_row_id }, 201);
+      }
+
+      // POST /admin/people/:id  (update)
+      if (request.method === "POST" && parts[0] === "admin" && parts[1] === "people" && parts.length === 3) {
+        const body: any = await request.json();
+        const fields: string[] = [];
+        const binds: (string | number | null)[] = [];
+        if (body.first_name !== undefined) { fields.push("first_name = ?"); binds.push(body.first_name); }
+        if (body.last_name !== undefined) { fields.push("last_name = ?"); binds.push(body.last_name); }
+        if (body.affiliation !== undefined) { fields.push("affiliation = ?"); binds.push(body.affiliation); }
+        if (body.active !== undefined) { fields.push("active = ?"); binds.push(body.active ? 1 : 0); }
+        if (fields.length === 0) {
+          return json({ error: "no fields to update" }, 400);
+        }
+        binds.push(parts[2]);
+        await env.DB.prepare(`UPDATE people SET ${fields.join(", ")} WHERE id = ?`).bind(...binds).run();
+        return json({ id: Number(parts[2]) }, 200);
       }
 
       // POST /admin/storms
